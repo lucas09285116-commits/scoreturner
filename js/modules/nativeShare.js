@@ -24,8 +24,17 @@
           if (!f || !f.data) return;
           fetch(f.data).then(function (blob) {
             var file = new File([blob], f.name || 'shared-score', { type: f.mime || blob.type || 'application/octet-stream' });
-            return api.loadFiles([file]);
-          }).then(function () {
+            return api.loadFiles([file]).then(function () { return file; });
+          }).then(function (file) {
+            // 主诉求：谱子要传到电脑上翻谱 —— 顺手上传进电脑端的收件箱
+            var Net = root.ST && root.ST.Net;
+            if (Net && Net.uploadFile) {
+              return Net.uploadFile(file).then(function () {
+                if (api && api.toast) api.toast('已打开，并已发到电脑收件箱 —— 电脑上点「手机传谱」即可打开', 6000);
+              }).catch(function () {
+                if (api && api.toast) api.toast('已在手机上打开，但发到电脑失败 —— 请检查手机网络', 5500);
+              });
+            }
             if (api && api.toast) api.toast('已打开「' + (f.name || '谱子') + '」', 3500);
           }).catch(function () {});
         });

@@ -212,6 +212,17 @@ var server = http.createServer(function (req, res) {
   }
   var p = parsed.pathname;
 
+  /* ---------------- 跨域（CORS）----------------
+   * 原生安卓 App 的页面 origin 是 http://localhost（Capacitor WebView），
+   * 它要把收到的谱子上传到本服务，必须放开跨域，否则浏览器直接拦截。
+   * 仅用于自用的上传/收件箱接口，故允许任意来源。
+   * --------------------------------------------------------------- */
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+
   /* ---------------- API：列表 ---------------- */
   if (req.method === 'GET' && p === '/api/files') {
     return sendJson(res, 200, { files: listMeta() });

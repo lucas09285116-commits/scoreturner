@@ -16,17 +16,27 @@
 (function (root) {
   var ST = (root.ST = root.ST || {});
 
+  // 原生 App（Capacitor）里没有本地后端，但要让它能把谱子"发到电脑"，
+  // 所以统一指向公网那台服务 —— 与电脑端打开的是同一个收件箱。
+  var PUBLIC_BACKEND = 'https://scoreturner.app.workbuddy.host';
+
+  function isNative() {
+    return typeof window !== 'undefined' && !!window.Capacitor;
+  }
+  function apiBase() {
+    return isNative() ? PUBLIC_BACKEND : '';
+  }
+
   function isOnline() {
-    // 被打包进原生壳（Capacitor）时虽然协议不是 file:，但并没有后端服务，
-    // 必须按"离线"处理，隐藏在线专属的「手机传谱」按钮与收件箱逻辑。
-    if (typeof window !== 'undefined' && window.Capacitor) return false;
-    return typeof location !== 'undefined' && location.protocol !== 'file:';
+    // 离线双击 index.html（file://）时停用；在线网页版与原生 App 均启用。
+    if (typeof location !== 'undefined' && location.protocol === 'file:') return false;
+    return true;
   }
 
   function uploadFile(file, onProgress) {
     return new Promise(function (resolve, reject) {
       var xhr = new XMLHttpRequest();
-      xhr.open('POST', '/api/upload?name=' + encodeURIComponent(file.name || 'score'));
+      xhr.open('POST', apiBase() + '/api/upload?name=' + encodeURIComponent(file.name || 'score'));
       xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
       if (xhr.upload && onProgress) {
         xhr.upload.onprogress = function (e) {
@@ -49,18 +59,18 @@
   }
 
   function listFiles() {
-    return fetch('/api/files').then(function (r) { return r.json(); }).then(function (j) {
+    return fetch(apiBase() + '/api/files').then(function (r) { return r.json(); }).then(function (j) {
       return (j && j.files) || [];
     });
   }
 
   function deleteFile(id) {
-    return fetch('/api/files/' + encodeURIComponent(id), { method: 'DELETE' })
+    return fetch(apiBase() + '/api/files/' + encodeURIComponent(id), { method: 'DELETE' })
       .then(function (r) { return r.json(); });
   }
 
   function fetchFile(id) {
-    return fetch('/api/files/' + encodeURIComponent(id)).then(function (r) {
+    return fetch(apiBase() + '/api/files/' + encodeURIComponent(id)).then(function (r) {
       if (!r.ok) throw new Error('下载失败（' + r.status + '）');
       return r.blob();
     });
@@ -104,7 +114,11 @@
 
     // 把本页地址显示出来——这就是手机要打开的链接
     var shareUrl = '';
-    try { shareUrl = location.origin + location.pathname; } catch (e) {}
+    if (isNative()) {
+      shareUrl = PUBLIC_BACKEND + '/';   // 原生 App 里要显示的是公网那台的地址
+    } else {
+      try { shareUrl = location.origin + location.pathname; } catch (e) {}
+    }
     if (linkEl && shareUrl && shareUrl.indexOf('http') === 0) {
       linkEl.textContent = shareUrl;
       linkEl.href = shareUrl;
@@ -159,13 +173,14 @@
       });
     }
 
-    var isLocalPreview = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+    // 原生 App 的 hostname 也是 localhost，但它不是"本地预览"，要排除掉
+    var isLocalPreview = !isNative() && /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
 
     /* ---------------- PWA：注册 service worker + 安装到主屏幕 ----------------
      * 装成应用后，安卓系统「分享」面板里才会出现 ScoreTurner，
      * B站/微信的谱子即可不下载直接分享进来（share_target → /share-target）。
      * ---------------------------------------------------------------------- */
-    if ('serviceWorker' in navigator && !isLocalPreview) {
+    if ('serviceWorker' in navigator && !isLocalPreview && !isNative()) {
       try { navigator.serviceWorker.register('/sw.js'); } catch (e) {}
     }
     var deferredInstall = null;
@@ -267,7 +282,7 @@
         if (!url) { toast('请先粘贴谱子链接'); return; }
         urlGo.disabled = true;
         urlGo.textContent = '抓取中…';
-        fetch('/api/fetch-url?url=' + encodeURIComponent(url), { method: 'POST' })
+        fetch(apiBase() + '/api/fetch-url?url=' + encodeURIComponent(url), { method: 'POST' })
           .then(function (r) { return r.json(); })
           .then(function (j) {
             if (j && j.error) { toast('抓取失败：' + j.error); return; }
