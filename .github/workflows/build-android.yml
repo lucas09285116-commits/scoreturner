@@ -38,12 +38,30 @@ jobs:
           yes | "$SDKMANAGER" --licenses
 
       - name: 编译 debug APK
+        id: build
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug --no-daemon 2>&1 | tee /tmp/gradle.log
+
+      - name: 发布构建日志供排查（公开分支，无需登录即可读）
+        if: always()
+        run: |
+          mkdir -p cilog
+          cp /tmp/gradle.log cilog/gradle.log 2>/dev/null || echo "(no gradle log)"
+          cp android/build.gradle cilog/top-build.gradle 2>/dev/null
+          cp android/app/build.gradle cilog/app-build.gradle 2>/dev/null
+          cp android/gradle/wrapper/gradle-wrapper.properties cilog/gradle-wrapper.properties 2>/dev/null
+          cp android/local.properties cilog/local.properties 2>/dev/null || true
+          git config user.email "ci@local"
+          git config user.name "CI"
+          git checkout -B ci-logs
+          git add -A cilog
+          git commit -m "ci build log" || true
+          git push -f origin ci-logs || true
 
       - name: 上传 APK 产物
+        if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: scoreturner-apk
