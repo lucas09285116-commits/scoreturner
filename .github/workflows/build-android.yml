@@ -20,6 +20,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 安装 JDK 21（Capacitor 8 / AGP 8.5+ 要求 Java 21）
+        id: jdk
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -36,6 +37,8 @@ jobs:
           npx cap sync android
 
       - name: 准备 Android SDK 平台与构建工具
+        env:
+          JAVA_HOME: ${{ steps.jdk.outputs.java-home }}
         run: |
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
@@ -44,8 +47,11 @@ jobs:
       - name: 编译 debug APK
         id: build
         working-directory: android
+        env:
+          JAVA_HOME: ${{ steps.jdk.outputs.java-home }}
         run: |
           set -o pipefail
+          java -version
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon 2>&1 | tee /tmp/gradle.log
 
