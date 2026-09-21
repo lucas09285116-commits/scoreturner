@@ -109,18 +109,14 @@ public class ShareReceiverPlugin extends Plugin {
   public void getPending(PluginCall call) {
     String p = pendingJson;
     pendingJson = null;
-    JSONArray arr;
+    JSArray files = new JSArray();          // 无参构造不会抛异常
     try {
-      arr = new JSONArray(p == null ? "[]" : p);
-    } catch (Exception e) {
-      arr = new JSONArray();
-    }
+      files = new JSArray(p == null ? "[]" : p);
+    } catch (Exception ignore) { /* 解析失败则用空数组 */ }
     JSObject ret = new JSObject();
     try {
-      ret.put("files", new JSArray(arr.toString()));
-    } catch (Exception e) {
-      ret.put("files", new JSArray("[]"));
-    }
+      ret.put("files", files);
+    } catch (Exception ignore) { /* best effort */ }
     call.resolve(ret);
   }
 }
