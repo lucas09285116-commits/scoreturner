@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ScoreTurner · 自动翻谱</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#101418">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ScoreTurner">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body data-theme="dark">
+
+<div id="app">
+
+  <header class="topbar" id="topbar">
+    <div class="brand"><span class="dot"></span>ScoreTurner</div>
+
+    <div class="group">
+      <label class="btn btn-primary">
+        导入乐谱
+        <input type="file" id="fileInput" accept=".pdf,image/*" multiple hidden>
+      </label>
+      <button class="btn" id="btnDemo">示例乐谱</button>
+      <button class="btn" id="btnNet" title="手机传谱：手机上传、电脑收件箱">📱 手机传谱</button>
+    </div>
+
+    <div class="group">
+      <button class="btn btn-icon" id="btnPrevPage" title="上一页 (PageUp)">◀</button>
+      <span class="page-readout" id="pageReadout">0 / 0</span>
+      <button class="btn btn-icon" id="btnNextPage" title="下一页 (PageDown)">▶</button>
+    </div>
+
+    <div class="group grow">
+      <input type="range" id="zoomRange" min="40" max="300" value="100" class="zoom-range" title="缩放">
+      <select id="zoomMode" class="select-slim" title="缩放模式">
+        <option value="fit">适应页面</option>
+        <option value="width">适应宽度</option>
+        <option value="manual">自定义</option>
+      </select>
+    </div>
+
+    <div class="group">
+      <button class="btn btn-toggle" id="btnMode" title="切换 演奏/编辑 (E)">演奏模式</button>
+      <button class="btn btn-toggle is-on" id="btnAuto" title="自动翻页 (A)">自动翻页</button>
+      <button class="btn btn-toggle" id="btnBoxes" title="显示小节框 (D)">小节框</button>
+      <button class="btn btn-toggle is-on" id="btnSound" title="节拍器声音开关 (M)">声音</button>
+      <button class="btn btn-toggle is-on" id="btnDark" title="深色背景 (B)">深色</button>
+      <button class="btn btn-toggle" id="btnWake" title="屏幕常亮">常亮</button>
+      <button class="btn btn-toggle" id="btnFull" title="全屏 (F)">全屏</button>
+      <button class="btn btn-toggle is-on" id="btnPanel" title="控制面板 (Tab)">面板</button>
+    </div>
+  </header>
+
+  <main class="stage" id="stage">
+    <div class="viewport" id="viewport">
+      <div class="track" id="track"></div>
+    </div>
+
+    <div class="pulse-bar" id="pulseBar">
+      <span class="pulse-dot" data-i="0"></span>
+      <span class="pulse-dot" data-i="1"></span>
+      <span class="pulse-dot" data-i="2"></span>
+      <span class="pulse-dot" data-i="3"></span>
+    </div>
+
+    <div class="now-playing" id="nowPlaying">
+      <span class="np-bar" id="npBar">第 — 小节</span>
+      <span class="np-pass" id="npPass"></span>
+    </div>
+
+    <div class="turn-flash" id="turnFlash"></div>
+    <div class="empty-hint" id="emptyHint">
+      <h1>三步就能开始</h1>
+      <p class="step"><b>1</b> 点顶栏「导入乐谱」选 PDF 或图片，<b>也可以直接把文件拖进窗口</b>（或 Ctrl+V 粘贴）—— 也可以先点「示例乐谱」试玩</p>
+      <p class="step"><b>2</b> 设 BPM 和拍号，按<b>空格</b>（或点「▶ 开始」）</p>
+      <p class="step"><b>3</b> 跟着节拍器弹，高亮自动往下走，到页尾自动翻页</p>
+      <p class="hint-keys">小提示：谱子自动画出的网格不准时，按 E 进编辑模式，拖动小节框微调</p>
+    </div>
+
+    <div class="toast" id="toast"></div>
+  </main>
+
+  <aside class="panel" id="panel">
+
+    <section class="card">
+      <h3>节拍器</h3>
+      <div class="row">
+        <button class="btn btn-primary big" id="btnPlay">▶ 开始</button>
+        <button class="btn big" id="btnReset">↺ 重置</button>
+      </div>
+      <div class="row">
+        <label class="lbl">BPM</label>
+        <input type="number" id="bpm" min="20" max="300" value="96" class="num">
+        <button class="btn btn-slim" id="btnTap">击拍</button>
+      </div>
+      <input type="range" id="bpmRange" min="20" max="300" value="96" class="wide">
+      <div class="row">
+        <label class="lbl">拍号</label>
+        <select id="sigNum" class="select-slim">
+          <option>2</option><option>3</option><option selected>4</option>
+          <option>5</option><option>6</option><option>7</option><option>9</option><option>12</option>
+        </select>
+        <span class="slash">/</span>
+        <select id="sigDen" class="select-slim">
+          <option selected>4</option><option>8</option><option>2</option>
+        </select>
+        <label class="chk"><input type="checkbox" id="compound" checked> 复合拍按附点计</label>
+      </div>
+      <div class="row">
+        <label class="lbl">音量</label>
+        <input type="range" id="vol" min="0" max="100" value="80" class="wide-slim">
+      </div>
+      <div class="row wrap">
+        <label class="chk"><input type="checkbox" id="cbSub"> 细分（每拍再分 2~3 下）</label>
+        <label class="chk"><input type="checkbox" id="cbAccent" checked> 重音</label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>进度追踪</h3>
+      <div class="readout">
+        <div><span id="rdBeat">0</span><small>当前拍</small></div>
+        <div><span id="rdIndex">0</span><small>时间线序号</small></div>
+        <div><span id="rdTotal">0</span><small>时间线小节</small></div>
+      </div>
+      <div class="row wrap">
+        <button class="btn btn-slim" data-cmd="prev-bar">◀◀ 小节</button>
+        <button class="btn btn-slim" data-cmd="prev-beat">◀ 拍</button>
+        <button class="btn btn-slim" data-cmd="next-beat">拍 ▶</button>
+        <button class="btn btn-slim" data-cmd="next-bar">小节 ▶▶</button>
+      </div>
+      <div class="row">
+        <label class="lbl">跳到小节</label>
+        <input type="number" id="jumpBar" min="1" value="1" class="num">
+        <select id="jumpPass" class="select-slim"><option value="0">第 1 次</option></select>
+        <button class="btn btn-slim" id="btnJump">跳转</button>
+      </div>
+      <p class="tip">点击页面上的小节框可直接跳到该处。</p>
+    </section>
+
+    <section class="card">
+      <h3>自动翻页</h3>
+      <div class="row">
+        <label class="lbl">提前</label>
+        <input type="number" id="leadVal" value="2" class="num">
+        <select id="leadUnit" class="select-slim">
+          <option value="beat">拍</option>
+          <option value="bar">小节</option>
+        </select>
+        <span class="note" id="leadNote">≈ 提前 2 拍</span>
+      </div>
+      <div class="row">
+        <label class="lbl">动画</label>
+        <input type="range" id="animMs" min="0" max="900" step="20" value="320" class="wide-slim">
+        <span class="note" id="animNote">320ms</span>
+      </div>
+      <div class="row wrap">
+        <label class="chk"><input type="checkbox" id="cbSpread"> 双页跨页显示</label>
+      </div>
+    </section>
+
+    <section class="card" id="cardEdit">
+      <h3>结构与反复</h3>
+      <div class="row">
+        <label class="lbl">默认反复</label>
+        <input type="number" id="repCount" min="2" max="8" value="2" class="num">
+        <span class="note">次</span>
+      </div>
+      <div class="row">
+        <label class="lbl">每行</label>
+        <input type="number" id="gridCols" value="4" min="1" max="12" class="num tiny">
+        <label class="lbl">共</label>
+        <input type="number" id="gridRows" value="4" min="1" max="12" class="num tiny">
+        <span class="note">行</span>
+        <button class="btn btn-slim" id="btnAutoLayout">按此网格重画</button>
+      </div>
+      <div class="row wrap">
+        <button class="btn btn-primary btn-slim" id="btnDetect">自动识别小节线</button>
+        <button class="btn btn-slim" id="btnGridAll">全部页重画</button>
+        <button class="btn btn-slim" id="btnClearMeasures">清空小节</button>
+      </div>
+      <div class="fields">
+        <select id="selMeasure" class="wide"><option value="">— 未选中小节 —</option></select>
+        <div class="row wrap">
+          <label class="chk"><input type="checkbox" id="mRepStart"> 反复开始 |:</label>
+          <label class="chk"><input type="checkbox" id="mRepEnd"> 反复结束 :|</label>
+        </div>
+        <div class="row">
+          <label class="lbl">反复次数</label>
+          <input type="number" id="mRepCount" min="2" max="8" value="2" class="num">
+        </div>
+        <div class="row">
+          <label class="lbl">跳房子</label>
+          <input type="text" id="mVolta" placeholder="如 1 或 1,2 或 2" class="txt">
+        </div>
+        <div class="row">
+          <label class="lbl">拍数</label>
+          <input type="number" id="mBeats" min="1" max="12" value="0" class="num">
+          <label class="lbl">拍号</label>
+          <input type="text" id="mSig" placeholder="留空继承" class="txt">
+        </div>
+      <div class="row">
+        <label class="lbl">本页第1格<br>谱面小节号</label>
+        <input type="number" id="pageBarStart" min="1" value="1" class="num tiny">
+        <span class="note">填谱面印的号，跳转就按它</span>
+        <button class="btn btn-slim" id="btnPageBars">对齐谱面小节号</button>
+        <button class="btn btn-slim" id="btnAutoBars">自动读谱面小节号</button>
+      </div>
+      <p class="tip" id="alignTip">跳转/高亮显示的「第几小节」用的是谱面印刷号。数字版 PDF 导入后会自动按谱面印的号对齐；吉他谱等文字层里混满品格数字的谱子，软件用「多页互相印证」投票过滤噪声。点「自动读谱面小节号」会重读并用印证结果整体覆盖（包括之前填错的值）。扫描件没有文字层时无法读号，请在上方「本页第1格谱面小节号」手动填，点「对齐」即可，后续页自动顺延并自动保存。</p>
+      <div class="row wrap">
+        <button class="btn btn-slim" id="btnDelMeasure">删除该小节</button>
+        <button class="btn btn-slim" id="btnSplitRow">重排行序</button>
+      </div>
+      </div>
+      <p class="tip" id="structTip">切到编辑模式后，在页面上拖动即可框出小节。</p>
+    </section>
+
+    <section class="card">
+      <h3>踏板与快捷键</h3>
+      <table class="binds">
+        <tr><td>下一页 / 翻页</td><td><button class="btn btn-slim bind" data-bind="next-page">—</button></td></tr>
+        <tr><td>上一页</td><td><button class="btn btn-slim bind" data-bind="prev-page">—</button></td></tr>
+        <tr><td>播放 / 暂停</td><td><button class="btn btn-slim bind" data-bind="toggle-play">—</button></td></tr>
+      </table>
+      <div class="row wrap">
+        <button class="btn btn-slim" id="btnMidi">接入 MIDI 踏板</button>
+        <button class="btn btn-slim" id="btnDefaultBinds">恢复默认</button>
+      </div>
+      <p class="tip">点击右侧按钮后按下目标按键即可绑定；MIDI 踏板默认识别 CC64（延音踏板）。</p>
+    </section>
+
+    <section class="card">
+      <h3>项目</h3>
+      <div class="row wrap">
+        <button class="btn btn-slim" id="btnExport">导出 JSON</button>
+        <label class="btn btn-slim">导入 JSON<input type="file" id="importJson" accept=".json" hidden></label>
+        <button class="btn btn-slim" id="btnResetAll">清空重来</button>
+      </div>
+      <p class="tip" id="saveTip">结构会自动存到本地，重新导入同一份乐谱时自动恢复。</p>
+    </section>
+
+  </aside>
+</div>
+
+  <div class="drop-overlay" id="dropOverlay">
+    <div class="drop-inner">🎵 松开以导入乐谱<small>支持 PDF 与图片，也可 Ctrl+V 粘贴</small></div>
+  </div>
+
+  <div class="net-modal" id="netModal" hidden>
+    <div class="net-card">
+      <div class="net-head">
+        <h2>手机传谱</h2>
+        <button class="net-close" id="netClose" title="关闭">×</button>
+      </div>
+      <p class="net-sub">手机用浏览器打开<b>下面这个链接</b>，选 PDF / 图片上传；电脑在这下方「收件箱」点「打开」即可导入。</p>
+      <div class="net-linkrow">
+        <a class="net-link" id="netLink" target="_blank" rel="noopener"></a>
+        <button class="btn btn-slim" id="netCopy">复制链接</button>
+      </div>
+      <div class="net-installrow">
+        <button class="btn btn-slim btn-primary" id="netInstall" hidden>📲 安装到主屏幕（安卓直传入口）</button>
+        <span class="net-install-status" id="netInstallStatus"></span>
+        <p class="net-tip" id="netInstallTip">安卓装成应用后：在 B站 / 微信 / 文件管理里点「分享」→ 选 ScoreTurner，<b>或点「用其他应用打开」直接选它</b>，谱子直接进收件箱，<b>不用先下载</b>。iPhone 不支持此通道，请用下方的选择文件或粘贴链接。</p>
+        <ol class="net-install-steps" id="netInstallSteps">
+          <li>用手机 <b>Chrome</b>（安卓）打开上面的链接</li>
+          <li>点右上角「⋮」菜单 → <b>「添加到主屏幕 / 安装应用」</b>（或地址栏右边的「＋/下载」图标）</li>
+          <li>装完后从桌面打开 ScoreTurner，再去 B站/文件管理分享或「打开方式」选它</li>
+        </ol>
+      </div>
+      <div class="net-upload">
+        <div class="net-drop" id="netDrop">
+          <input type="file" id="netFile" accept="*/*" multiple hidden>
+          <span class="net-drop-text">📤 点此从手机选择乐谱上传<small>PDF 或图片都行 · 会让你从「文件 / 微信 / 相册 / 相机」里选</small></span>
+        </div>
+        <p class="net-tip">手机上的谱子若还在微信里，先<b>长按 → 保存到手机 / 用其他应用打开</b>，再到这里就能选到了。</p>
+        <div class="net-urlrow">
+          <input type="url" id="netUrl" class="net-url" placeholder="或粘贴谱子链接，服务器帮你下载（公开网页可用，需登录的抓不到）">
+          <button class="btn btn-slim" id="netUrlGo">抓取</button>
+        </div>
+        <div class="net-progress" id="netProgress" hidden>
+          <div class="net-bar" id="netBar"></div><span id="netPct">0%</span>
+        </div>
+      </div>
+      <div class="net-inbox">
+        <div class="net-inbox-head">收件箱 <button class="btn btn-slim" id="netRefresh">刷新</button></div>
+        <ul class="net-list" id="netList"><li class="net-empty">还没有收到文件 —— 手机上传后会出现在这里</li></ul>
+      </div>
+    </div>
+  </div>
+
+<script src="vendor/pdf.min.js"></script>
+<script src="vendor/pdf.worker.min.js"></script>
+<script src="js/core/bus.js"></script>
+<script src="js/core/store.js"></script>
+<script src="js/modules/structure.js"></script>
+<script src="js/modules/metronome.js"></script>
+<script src="js/modules/tracker.js"></script>
+<script src="js/modules/pageTurn.js"></script>
+<script src="js/modules/scoreLoader.js"></script>
+<script src="js/modules/barlineDetect.js"></script>
+<script src="js/modules/demoScore.js"></script>
+<script src="js/modules/persistence.js"></script>
+<script src="js/modules/input.js"></script>
+<script src="js/ui/renderer.js"></script>
+<script src="js/ui/panel.js"></script>
+<script src="js/modules/net.js"></script>
+<script src="js/modules/nativeShare.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

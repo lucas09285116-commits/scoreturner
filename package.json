@@ -1,0 +1,15 @@
+{
+  "name": "scoreturner",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ScoreTurner 自动翻谱 - 带手机传谱上传后端的在线版",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/cli": "^8.5.2",
+    "@capacitor/core": "^8.5.2"
+  }
+}
