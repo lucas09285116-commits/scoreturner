@@ -71,10 +71,12 @@
    * （贴边的是竖线残留/谱线本身，不是圆点）。
    */
   function hasRepeatDot(dark, w, gapX0, gapX1, top, bot, staffH) {
-    var gx0 = Math.max(0, Math.round(gapX0)), gx1 = Math.min(w - 1, Math.round(gapX1));
+    // 只搜缝隙"内侧"：左右各让出 2px，避开两根竖线本身。
+    // 否则抗锯齿会让圆点与竖线连成同一连通域，包围盒被拉成整条竖线 → 判不出来。
+    var gx0 = Math.max(0, Math.round(gapX0) + 2), gx1 = Math.min(w - 1, Math.round(gapX1) - 2);
     var gw = gx1 - gx0 + 1, gh = bot - top + 1;
     if (gw <= 0 || gh <= 0) return false;
-    var minD = Math.max(3, staffH * 0.06);
+    var minD = Math.max(2.5, staffH * 0.05);
     var maxD = staffH * 0.35;
     var seen = new Uint8Array(gw * gh);
     var stack = [];
@@ -162,11 +164,43 @@
     /* ③ 每行内找"贯穿整条谱表的连续竖线" = 小节线 */
     var measures = [], doubles = 0, rowInfo = [];
     systems.forEach(function (s, rowIdx) {
-      var lines2 = keepEvenlySpaced(s);
+      /**
+       * 系统内先按"间隙 ≤ 1.7×局部中位行距"切成子谱表，每段各自做等间距过滤，
+       * 但**保留所有子谱表**（TAB+五线谱 / TAB+人声单线谱 都是多子谱表系统）。
+       * 之前直接对整组做 keepEvenlySpaced 会把人声线/另一张谱表砍掉，
+       * 谱带只剩 TAB → 符干、琶音箭头（高达 90% 谱高）全被当成小节线。
+       */
+      var sub = [], csub = null;
+      for (var li = 0; li < s.length; li++) {
+        if (csub) {
+          var lgs = [];
+          for (var k2 = 1; k2 < csub.length; k2++) lgs.push(csub[k2] - csub[k2 - 1]);
+          var lmed = lgs.slice().sort(function (a, b) { return a - b; })[Math.floor(lgs.length / 2)] || 1;
+          if (s[li] - csub[csub.length - 1] <= Math.max(22, lmed * 1.7)) { csub.push(s[li]); continue; }
+        }
+        csub = [s[li]]; sub.push(csub);
+      }
+      // 保留 ≥3 线的真谱表；再回贴"紧贴其后的单线谱"（人声线，≤3.2d）
+      var kept = sub.map(keepEvenlySpaced).filter(function (x) { return x.length >= 3; });
+      var dEst = 14;
+      if (kept.length) {
+        var dAll = [];
+        kept.forEach(function (x) { for (var q = 1; q < x.length; q++) dAll.push(x[q] - x[q - 1]); });
+        if (dAll.length) dEst = dAll.slice().sort(function (a, b) { return a - b; })[Math.floor(dAll.length / 2)] || 14;
+      }
+      sub.forEach(function (x) {
+        if (x.length >= 3 || !kept.length) return;
+        var lastKept = kept[kept.length - 1];
+        if (x[0] > lastKept[lastKept.length - 1] && x[0] - lastKept[lastKept.length - 1] <= Math.max(45, dEst * 3.2)) kept.push(x);
+      });
+      var lines2 = [];
+      kept.forEach(function (x) { lines2 = lines2.concat(x); });
+      lines2.sort(function (a, b) { return a - b; });
       if (lines2.length < 3) return;
       var staffTop = lines2[0], staffBot = lines2[lines2.length - 1];
       var staffH = staffBot - staffTop;
-      if (staffH < 12) return;
+      // 过低的行系统（歌词条/横梁拼出来的假谱表）直接丢掉：真谱表至少 4~5 条线高
+      if (staffH < Math.max(30, dEst * 3)) return;
       var top = Math.max(0, staffTop - 4);
       var bot = Math.min(h - 1, staffBot + 4);
 
@@ -181,10 +215,43 @@
         maxRun[xx] = best;
       }
 
+      /**
+       * 找"谱表间空隙"：谱内相邻线间距的中位数为 d，明显大于它（≥1.7d 且≥8px）的
+       * 那个间隙就是双谱表系统里 TAB 与（五线谱/人声线）之间的空隙。
+       * 真小节线会穿过这道空隙，而符干、琶音箭头只存在于单个谱表内 —— 这是把
+       * 它们区分开的决定性判据（《Love Song》143 个假小节的根因）。
+       */
+      var gapA = null, gapB = null, bestGapPx = 0;
+      if (lines2.length >= 4) {
+        var gs = [];
+        for (var gi = 1; gi < lines2.length; gi++) gs.push(lines2[gi] - lines2[gi - 1]);
+        var gmed = gs.slice().sort(function (a, b) { return a - b; })[Math.floor(gs.length / 2)] || 1;
+        for (gi = 1; gi < lines2.length; gi++) {
+          var gp = lines2[gi] - lines2[gi - 1];
+          if (gp > bestGapPx && gp >= Math.max(8, gmed * 1.7)) {
+            bestGapPx = gp; gapA = lines2[gi - 1]; gapB = lines2[gi];
+          }
+        }
+      }
+
       var maxWd = Math.max(6, staffH * 0.14);
       var bars = [], ratios = [0.9, 0.75, 0.6];
       for (var t = 0; t < ratios.length && bars.length < 2; t++) {
         bars = collectBars(maxRun, w, staffH * ratios[t], maxWd);
+        // 穿隙校验：候选竖线必须在谱表间空隙那段也有暗像素，否则是符干/箭头
+        if (gapA != null) {
+          var ga = Math.max(top, gapA + 3), gb = Math.min(bot, gapB - 3);
+          bars = bars.filter(function (b) {
+            var n = 0, tot = 0;
+            for (var y = ga; y <= gb; y++) {
+              for (var xx = b.x - 1; xx <= b.x + 1; xx++) {
+                if (xx < 0 || xx >= w) continue;
+                tot++; if (dark[y * w + xx]) n++;
+              }
+            }
+            return tot > 0 && (n / tot) >= 0.6;
+          });
+        }
       }
       if (bars.length < 2) return;
 
@@ -192,7 +259,9 @@
        *    并组间距不写死 16px：双谱表大谱表（五线谱+六线谱）的反复线两根离得更远，
        *    按谱表高度缩放并钳制到 [8,28]，避免大谱表上同一根双竖线被拆成两个边界
        *    产生"假 1px 小节"，也避免小谱表上相邻两条真小节线被误并。 */
-      var grpGap = Math.max(8, Math.min(28, staffH * 0.08));
+      // 并组间距：要能容纳反复线/终止线两根之间的缝隙（常见 4~16px），
+      // 又不能把两条真小节线（间距远大于此）并在一起
+      var grpGap = Math.max(14, Math.min(30, staffH * 0.18));
       var groups = [];
       bars.forEach(function (b) {
         var last = groups[groups.length - 1];
@@ -218,8 +287,8 @@
       var padY = 6;
       for (var j = 0; j < groups.length - 1; j++) {
         var x0 = groups[j].x1, x1 = groups[j + 1].x0;
-        // <14px 的窄缝是并组残留（双竖线两根之间），不是小节；计数以便诊断漏切
-        if (x1 - x0 < 14) { skippedNarrow++; continue; }
+        // 窄缝不是小节：双竖线两根之间 / 并组残留。阈值随谱高缩放（双谱表更宽）
+        if (x1 - x0 < Math.max(20, Math.min(40, staffH * 0.3))) { skippedNarrow++; continue; }
         var gL = groups[j], gR = groups[j + 1];
         var lastIdx = j + 1 === groups.length - 1;   // 行尾的右边界才能算 :│
         var dblLeft = !!gL.repeat;
@@ -554,7 +623,11 @@
    * 自动用新算法重新识别——否则用户重新导入同一份谱子会一直看到旧算法
    * 留下的错误框（例如"一格被切成两格"），误以为修复没生效。
    */
-  var DETECT_VERSION = 5;   // 1=像素投影 2=PDF矢量检测 3=矢量检测区分终止线/反复线 4=以"反复圆点"判定是否反复(终止线不再误判为反复)
+  var DETECT_VERSION = 6;   // 1=像素投影 2=PDF矢量检测 3=矢量检测区分终止线/反复线 4=以"反复圆点"判定是否反复(终止线不再误判为反复)
+  // 5=①像素路径补齐同一"圆点判据"(扫描件终止线不再误判为反复) ②并组间距随谱高缩放
+  //   ③measures 增加 row/index 字段 ④窄缝跳过计入 debug.rowInfo(漏切可诊断) ⑤圆点搜索窗口随缝隙宽度相对化
+  // 6=像素路径重写系统聚类：保留多子谱表(TAB+五线谱/人声线)、"穿隙校验"剔除符干与琶音箭头、
+  //   过滤过矮的假系统、窄缝阈值随谱高缩放 —— 《Love Song》扫描稿 143 → 14(真值 14)
   // 5=①像素路径补齐同一"圆点判据"(扫描件终止线不再误判为反复) ②并组间距随谱表高度缩放
   //   ③measures 增加 row/index 字段 ④窄缝跳过计入 debug.rowInfo(漏切可诊断) ⑤圆点搜索窗口随缝隙宽度相对化
 
