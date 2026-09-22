@@ -210,6 +210,34 @@ function stdSystem(top, bot, xs) {
     Math.abs(vec13.dots[0].x - 201) < 1 && Math.abs(vec13.dots[0].y - 1400) < 1 &&
     Math.abs(vec13.dots[1].x - 201) < 1 && Math.abs(vec13.dots[1].y - 1470) < 1);
 
+  console.log('\n[V14] 每个小节带 row/index，且行内自左向右、行间自上而下');
+  var v14 = await D.detectPageVec(fakeSource([{ size: { w: W, h: H }, opList: opList(stdSystem(1500, 1300, [200, 360, 520]).concat(stdSystem(1100, 900, [200, 360, 520]))) }]), 0);
+  eq('第一行 row=0', v14.measures.slice(0, 4).map(function (m) { return m.row; }), [0, 0, 0, 0]);
+  eq('第二行 row=1', v14.measures.slice(4).map(function (m) { return m.row; }), [1, 1, 1, 1]);
+  eq('行内 index 连续', v14.measures.slice(0, 4).map(function (m) { return m.index; }), [0, 1, 2, 3]);
+  ok('行间自上而下（第二行 y 更大）', v14.measures[0].y < v14.measures[4].y);
+
+  console.log('\n[V15] 窄缝(15<x间差<30)被跳过时计入 skippedNarrow，漏切可诊断');
+  var items15 = stdSystem(1500, 1300, [200, 220, 360, 520]);   // 200 与 220 相距20：不并组、又被窄缝过滤
+  var v15 = await D.detectPageVec(fakeSource([{ size: { w: W, h: H }, opList: opList(items15) }]), 0);
+  eq('窄缝不产生假小节', v15.measures.length, 4);
+  ok('没有任何小节落在窄缝区间 [201,219]', v15.measures.every(function (m) {
+    var left = m.x * W; return left < 201 || left > 219;
+  }));
+  eq('skippedNarrow 记录了这次跳过', v15.debug.rowInfo[0].skippedNarrow, 1);
+  eq('rowInfo 还带有 bounds/measures/repeats', [v15.debug.rowInfo[0].bounds, v15.debug.rowInfo[0].measures, v15.debug.rowInfo[0].repeats], [6, 4, 0]);
+
+  console.log('\n[V16] 反复圆点贴缝：相对化窗口能找到，固定±7 会漏');
+  var items16 = [
+    line(40, 1500, 700, 1500), line(40, 1300, 700, 1300),
+    rect(200, 1300, 2.5, 200), rect(215, 1300, 2.5, 200),   // 缝隙宽15 → tol = max(7, 9) = 9
+    dot(224, 1400), fill(),                                  // 圆心在 gapX1+9：旧±7 找不到，新窗口能找到
+    rect(400, 1300, 2.5, 200), rect(560, 1300, 2.5, 200),
+    line(40, 1300, 40, 1500)
+  ];
+  var v16 = await D.detectPageVec(fakeSource([{ size: { w: W, h: H }, opList: opList(items16) }]), 0);
+  ok('贴边反复圆点被识别（doubles=1）', v16.doubles === 1, 'doubles=' + v16.doubles);
+
   console.log('\n=== 统计 ===');
   console.log('  通过 ' + pass + ' / 失败 ' + fail);
   process.exit(fail ? 1 : 0);

@@ -61,6 +61,51 @@
   }
 
   /**
+   * 像素路径的「反复圆点」检测：在双竖线两根线的缝隙里找近似方形的小实心点。
+   * 与矢量路径同一语义（见 detectFromVecPrimitives ⑤）：缝隙里有圆点 → 反复线(|: :|)；
+   * 没有 → 段落终止线，绝不标反复。在此修复之前，像素路径把任何双竖线都当反复，
+   * 扫描版吉他谱的终止线会导致演奏错误回跳（与《二十二》矢量路径同款 bug）。
+   *
+   * 实现：在缝隙矩形 [gapX0,gapX1]×[top,bot] 内做 4-连通域标记，
+   * 圆点特征 = 宽高都落在 [6%谱表高, 35%谱表高]、宽高比 ≤2.2、且上下不贴谱表带边缘
+   * （贴边的是竖线残留/谱线本身，不是圆点）。
+   */
+  function hasRepeatDot(dark, w, gapX0, gapX1, top, bot, staffH) {
+    var gx0 = Math.max(0, Math.round(gapX0)), gx1 = Math.min(w - 1, Math.round(gapX1));
+    var gw = gx1 - gx0 + 1, gh = bot - top + 1;
+    if (gw <= 0 || gh <= 0) return false;
+    var minD = Math.max(3, staffH * 0.06);
+    var maxD = staffH * 0.35;
+    var seen = new Uint8Array(gw * gh);
+    var stack = [];
+    for (var sy = 0; sy < gh; sy++) {
+      for (var sx = 0; sx < gw; sx++) {
+        var si = sy * gw + sx;
+        if (seen[si] || !dark[(top + sy) * w + gx0 + sx]) continue;
+        // 泛洪收集一个连通域，同时记录包围盒
+        var minX = sx, maxX = sx, minY = sy, maxY = sy;
+        stack.length = 0; stack.push(si); seen[si] = 1;
+        while (stack.length) {
+          var cur = stack.pop();
+          var cx = cur % gw, cy = (cur - cx) / gw;
+          if (cx < minX) minX = cx; if (cx > maxX) maxX = cx;
+          if (cy < minY) minY = cy; if (cy > maxY) maxY = cy;
+          // 四邻居（在缝隙窗口内）
+          if (cx > 0 && !seen[cur - 1] && dark[(top + cy) * w + gx0 + cx - 1]) { seen[cur - 1] = 1; stack.push(cur - 1); }
+          if (cx < gw - 1 && !seen[cur + 1] && dark[(top + cy) * w + gx0 + cx + 1]) { seen[cur + 1] = 1; stack.push(cur + 1); }
+          if (cy > 0 && !seen[cur - gw] && dark[(top + cy - 1) * w + gx0 + cx]) { seen[cur - gw] = 1; stack.push(cur - gw); }
+          if (cy < gh - 1 && !seen[cur + gw] && dark[(top + cy + 1) * w + gx0 + cx]) { seen[cur + gw] = 1; stack.push(cur + gw); }
+        }
+        var bw = maxX - minX + 1, bh = maxY - minY + 1;
+        if (bw >= minD && bh >= minD && bw <= maxD && bh <= maxD &&
+            bw / bh <= 2.2 && bh / bw <= 2.2 &&
+            minY > 0 && maxY < gh - 1) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * @returns {Promise<{measures:Array, rows:number, doubles:number}>}
    * measures: [{ x, y, w, h, repeatStart?, repeatEnd? }]，坐标已归一化 0~1
    */
@@ -116,7 +161,7 @@
 
     /* ③ 每行内找"贯穿整条谱表的连续竖线" = 小节线 */
     var measures = [], doubles = 0, rowInfo = [];
-    systems.forEach(function (s) {
+    systems.forEach(function (s, rowIdx) {
       var lines2 = keepEvenlySpaced(s);
       if (lines2.length < 3) return;
       var staffTop = lines2[0], staffBot = lines2[lines2.length - 1];
@@ -143,46 +188,65 @@
       }
       if (bars.length < 2) return;
 
-      /* ④ 把间距很近的竖线并成一组（粗+细 = 一条双竖线，本就是同一个小节边界） */
+      /* ④ 把间距很近的竖线并成一组（细+细 / 细+粗 = 一条双竖线的两根，同一处边界）。
+       *    并组间距不写死 16px：双谱表大谱表（五线谱+六线谱）的反复线两根离得更远，
+       *    按谱表高度缩放并钳制到 [8,28]，避免大谱表上同一根双竖线被拆成两个边界
+       *    产生"假 1px 小节"，也避免小谱表上相邻两条真小节线被误并。 */
+      var grpGap = Math.max(8, Math.min(28, staffH * 0.08));
       var groups = [];
       bars.forEach(function (b) {
         var last = groups[groups.length - 1];
-        if (last && b.x - last.x1 <= 16) {
+        if (last && b.x - last.x1 <= grpGap) {
           last.x1 = b.x; last.n++; last.lastWd = b.wd;
           if (b.wd > last.maxWd) last.maxWd = b.wd;
         } else {
-          groups.push({ x0: b.x, x1: b.x, n: 1, firstWd: b.wd, lastWd: b.wd, maxWd: b.wd });
+          groups.push({ x0: b.x, firstX: b.x, x1: b.x, n: 1, firstWd: b.wd, lastWd: b.wd, maxWd: b.wd });
         }
       });
-      rowInfo.push({
-        top: staffTop, bot: staffBot, bh: staffH,
-        bars: groups.map(function (g) { return g.x0 + (g.n > 1 ? '*' + g.n + '/' + g.firstWd + '-' + g.lastWd : ''); })
-      });
-      if (groups.length < 2) return;
 
+      /**
+       * 双竖线语义判定（与矢量路径 v4 同一规则）：一组(n>1)的缝隙里有反复圆点
+       * 才是反复线(|: :|)；否则是段落终止线（final），绝不触发回溯。
+       * 在此修复前，像素路径把任何双竖线都当反复——扫描版吉他谱里的终止线
+       * 会让上层按顺序配对出假反复，演奏时错误跳回。
+       */
+      groups.forEach(function (g) {
+        g.repeat = g.n > 1 && hasRepeatDot(dark, w, g.firstX, g.x1, top, bot, staffH);
+      });
+
+      var rowMeasures = 0, skippedNarrow = 0;
       var padY = 6;
       for (var j = 0; j < groups.length - 1; j++) {
         var x0 = groups[j].x1, x1 = groups[j + 1].x0;
-        if (x1 - x0 < 14) continue;
-        /**
-         * 只标记"这里是双竖线"，不在这里猜它是 │: 还是 :│
-         * —— 1px 级别的粗细差异在 JPEG/抗锯齿下并不稳定，
-         * 方向交给上层按顺序两两配对来判断（见 app.js）。
-         */
+        // <14px 的窄缝是并组残留（双竖线两根之间），不是小节；计数以便诊断漏切
+        if (x1 - x0 < 14) { skippedNarrow++; continue; }
         var gL = groups[j], gR = groups[j + 1];
-        var dblLeft = gL.n > 1;
-        var dblRight = gR.n > 1;
+        var lastIdx = j + 1 === groups.length - 1;   // 行尾的右边界才能算 :│
+        var dblLeft = !!gL.repeat;
+        var dblRight = !!(lastIdx && gR.repeat);
         if (dblLeft) doubles++;
-        if (dblRight && j + 1 === groups.length - 1) doubles++;   // 行尾单独算一次
         measures.push({
           x: x0 / w,
           y: Math.max(0, top - padY) / h,
           w: (x1 - x0) / w,
           h: (staffH + padY * 2) / h,
-          doubleLeft: !!dblLeft,
-          doubleRight: !!dblRight
+          doubleLeft: dblLeft,
+          doubleRight: dblRight,
+          finalLeft: gL.n > 1 && !dblLeft,          // 双竖线但无圆点 = 段落终止
+          finalRight: lastIdx && gR.n > 1 && !dblRight,
+          row: rowIdx,                              // 页内第几个谱表行（0 起，自上而下）
+          index: rowMeasures                        // 页内第几格（0 起，自左向右）
         });
+        rowMeasures++;
       }
+      rowInfo.push({
+        row: rowIdx, top: staffTop, bot: staffBot, bh: staffH,
+        bounds: groups.length, measures: rowMeasures, skippedNarrow: skippedNarrow,
+        repeats: groups.filter(function (g) { return g.repeat; }).length,
+        bars: groups.map(function (g) {
+          return g.x0 + (g.n > 1 ? '*' + g.n + (g.repeat ? ':rep' : ':fin') : '');
+        })
+      });
     });
 
     return {
@@ -366,9 +430,9 @@
       return Math.abs(s.y1 - s.y0) < 2 && Math.abs(s.x1 - s.x0) > 100;
     });
 
-    var measures = [], doubles = 0;
+    var measures = [], doubles = 0, rowInfo = [];
     systems.sort(function (a, b) { return b.yc - a.yc; }); // PDF y 底向上 → 降序 = 页面从上到下
-    systems.forEach(function (sys) {
+    systems.forEach(function (sys, rowIdx) {
       var top = Math.max.apply(null, sys.items.map(function (p) { return p.y1; }));
       var bot = Math.min.apply(null, sys.items.map(function (p) { return p.y0; }));
       var edges = hSegs.filter(function (s) {
@@ -415,25 +479,40 @@
       var sysDots = dots.filter(function (d) { return d.y >= bot - 20 && d.y <= top + 20; });
       bounds.forEach(function (b) {
         if (!b.dblCand) return;
+        // 搜索窗口随缝隙宽度相对化：粗终止线的两根线离得远，固定 ±7 会漏掉贴边的圆点
+        var tolX = Math.max(7, (b.gapX1 - b.gapX0) * 0.6);
         var hasDot = sysDots.some(function (d) {
-          return d.x >= b.gapX0 - 7 && d.x <= b.gapX1 + 7 && d.y >= b.y0 - 16 && d.y <= b.y1 + 16;
+          return d.x >= b.gapX0 - tolX && d.x <= b.gapX1 + tolX && d.y >= b.y0 - 16 && d.y <= b.y1 + 16;
         });
         if (hasDot) { b.dbl = true; b.final = false; }
         else { b.dbl = false; b.final = true; }
       });
 
+      var rowMeasures = 0, skippedNarrow = 0;
       for (var j = 0; j < bounds.length - 1; j++) {
         var x0 = bounds[j].x, x1 = bounds[j + 1].x;
-        if (x1 - x0 < 30) continue;
+        // <30 的窄缝几乎都是没并干净的双竖线两根之间的残留，不是小节：
+        // 跳过但计数——漏切不再无声丢格（那会导致本行小节号整体错位却无人知晓），
+        // 而是记进 debug.rowInfo，可按行定位排查。
+        if (x1 - x0 < 30) { skippedNarrow++; continue; }
         measures.push({
           x: x0 / W, y: (H - top) / H, w: (x1 - x0) / W, h: (top - bot) / H,
           doubleLeft: bounds[j].dbl, doubleRight: bounds[j + 1].dbl,
-          finalLeft: bounds[j].final, finalRight: bounds[j + 1].final
+          finalLeft: bounds[j].final, finalRight: bounds[j + 1].final,
+          row: rowIdx,          // 页内第几个谱表行（0 起，自上而下）
+          index: rowMeasures    // 页内第几格（0 起，自左向右）
         });
-        if (bounds[j].dbl) doubles++;
+        rowMeasures++;
       }
+      doubles += bounds.filter(function (b) { return b.dbl; }).length; // 每条反复线只计一次（含行尾 :│）
+      rowInfo.push({
+        row: rowIdx, top: top, bot: bot,
+        bounds: bounds.length, measures: rowMeasures, skippedNarrow: skippedNarrow,
+        repeats: bounds.filter(function (b) { return b.dbl; }).length,
+        finals: bounds.filter(function (b) { return b.final; }).length
+      });
     });
-    return { measures: measures, rows: systems.length, doubles: doubles };
+    return { measures: measures, rows: systems.length, doubles: doubles, debug: { rowInfo: rowInfo } };
   }
 
   /**
@@ -475,7 +554,9 @@
    * 自动用新算法重新识别——否则用户重新导入同一份谱子会一直看到旧算法
    * 留下的错误框（例如"一格被切成两格"），误以为修复没生效。
    */
-  var DETECT_VERSION = 4;   // 1=像素投影 2=PDF矢量检测 3=矢量检测区分终止线/反复线 4=以"反复圆点"判定是否反复(终止线不再误判为反复)
+  var DETECT_VERSION = 5;   // 1=像素投影 2=PDF矢量检测 3=矢量检测区分终止线/反复线 4=以"反复圆点"判定是否反复(终止线不再误判为反复)
+  // 5=①像素路径补齐同一"圆点判据"(扫描件终止线不再误判为反复) ②并组间距随谱表高度缩放
+  //   ③measures 增加 row/index 字段 ④窄缝跳过计入 debug.rowInfo(漏切可诊断) ⑤圆点搜索窗口随缝隙宽度相对化
 
   ST.BarlineDetect = {
     detectPage: detectPage,
