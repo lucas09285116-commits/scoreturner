@@ -145,17 +145,21 @@
       rowCount[y] = c;
     }
     var minRow = w * 0.35;
+    var minRow = w * 0.35;
     var lines = [], run = null;
     for (y = 0; y < h; y++) {
       if (rowCount[y] >= minRow) { if (!run) run = { a: y, b: y }; else run.b = y; }
-      else if (run) { lines.push(Math.round((run.a + run.b) / 2)); run = null; }
+      else if (run) {
+        // 只认细线（≤6px）：横梁、粗黑条不是谱线
+        if (run.b - run.a + 1 <= 6) lines.push(Math.round((run.a + run.b) / 2));
+        run = null;
+      }
     }
-    if (run) lines.push(Math.round((run.a + run.b) / 2));
+    if (run && run.b - run.a + 1 <= 6) lines.push(Math.round((run.a + run.b) / 2));
 
-    /* ② 谱线 → 行系统 */
+    /* ② 谱线 → 行系统（单阶段：间隙 ≤34） */
     var systems = [], cur = null;
     for (var i = 0; i < lines.length; i++) {
-      // 注意：比较对象是"当前这一组的最后一条线"，不是 lines 数组同下标的那个元素
       if (cur && lines[i] - cur[cur.length - 1] <= (opts.maxLineGap || 34)) cur.push(lines[i]);
       else { cur = [lines[i]]; systems.push(cur); }
     }
@@ -180,7 +184,8 @@
         }
         csub = [s[li]]; sub.push(csub);
       }
-      // 保留 ≥3 线的真谱表；再回贴"紧贴其后的单线谱"（人声线，≤3.2d）
+      // 保留 ≥3 线的谱表（四/五/六线谱；贝斯四线谱也是 4 条）。
+      // 真实歌词是文字，行投影覆盖率低（宽松阈值下也过不了 50%），不会混成"谱表"。
       var kept = sub.map(keepEvenlySpaced).filter(function (x) { return x.length >= 3; });
       var dEst = 14;
       if (kept.length) {
@@ -188,8 +193,9 @@
         kept.forEach(function (x) { for (var q = 1; q < x.length; q++) dAll.push(x[q] - x[q - 1]); });
         if (dAll.length) dEst = dAll.slice().sort(function (a, b) { return a - b; })[Math.floor(dAll.length / 2)] || 14;
       }
+      // 回贴"紧贴谱表的小附属谱"（人声单线谱，常带下划线 → 1~3 条）
       sub.forEach(function (x) {
-        if (x.length >= 3 || !kept.length) return;
+        if (x.length > 3 || !kept.length) return;
         var lastKept = kept[kept.length - 1];
         if (x[0] > lastKept[lastKept.length - 1] && x[0] - lastKept[lastKept.length - 1] <= Math.max(45, dEst * 3.2)) kept.push(x);
       });
